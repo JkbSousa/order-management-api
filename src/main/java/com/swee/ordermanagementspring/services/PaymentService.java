@@ -57,7 +57,7 @@ public class PaymentService {
 
         return paymentRepository.save(payment);
     }
-
+    @Transactional
     public Payment update(Long id, PaymentRequestDTO dto) {
         Payment existing = findById(id);
 
@@ -65,12 +65,77 @@ public class PaymentService {
             throw new PaymentException("Only payments with PENDING status can be edited");
         }
 
-        Order order = existing.getOrder();
-        Payment updated = buildPayment(dto, order);
-        updated.setOrder(order);
+        boolean typeChanged =
+                (dto.getType().equalsIgnoreCase("CARD") && !(existing instanceof CardPayment))
+                        || (dto.getType().equalsIgnoreCase("PIX") && !(existing instanceof PixPayment))
+                        || (dto.getType().equalsIgnoreCase("BOLETO") && !(existing instanceof BoletoPayment));
 
-        paymentRepository.delete(existing);
-        return paymentRepository.save(updated);
+        if (typeChanged) {
+            Order order = existing.getOrder();
+
+            //remove a referencia do payment antigo do banco
+            order.setPayment(null);
+
+            //remove o payment antigo
+            paymentRepository.delete(existing);
+            paymentRepository.flush();
+
+            //cria um novo tipo de payment
+            Payment updated = buildPayment(dto, order);
+
+            //mantem os dois lados do relacionamento sincronizados
+            order.setPayment(updated);
+            updated.setOrder(order);
+
+            return paymentRepository.save(updated);
+        }
+
+        switch (dto.getType().toUpperCase()) {
+
+            case "CARD" -> {
+                if (dto.getCardNumber() == null || dto.getCardNumber().isBlank()) {
+                    throw new PaymentException("cardNumber is required for CARD payments");
+                }
+
+                CardPayment payment = (CardPayment) existing;
+
+                payment.setAmount(dto.getAmount());
+                payment.setCardNumber(dto.getCardNumber());
+                payment.setCardHolder(dto.getCardHolder());
+                payment.setInstallments(dto.getInstallments());
+            }
+
+            case "PIX" -> {
+                if (dto.getPixKey() == null || dto.getPixKey().isBlank()) {
+                    throw new PaymentException("pixKey is required for PIX payments");
+                }
+
+                PixPayment payment = (PixPayment) existing;
+
+                payment.setAmount(dto.getAmount());
+                payment.setPixKey(dto.getPixKey());
+                payment.setPixHolderName(dto.getPixHolderName());
+                payment.setPixKeyType(null);
+            }
+
+            case "BOLETO" -> {
+                if (dto.getBarCode() == null || dto.getBarCode().isBlank()) {
+                    throw new PaymentException("barCode is required for BOLETO payments");
+                }
+
+                BoletoPayment payment = (BoletoPayment) existing;
+
+                payment.setAmount(dto.getAmount());
+                payment.setBarCode(dto.getBarCode());
+                payment.setDueDate(dto.getDueDate());
+            }
+
+            default -> throw new PaymentException(
+                    "Invalid payment type: " + dto.getType()
+            );
+        }
+
+        return paymentRepository.save(existing);
     }
 
     private Payment buildPayment(PaymentRequestDTO dto, Order order) {
