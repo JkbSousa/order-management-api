@@ -36,6 +36,10 @@ public class BoletoPayment extends Payment{
         return dueDate;
     }
 
+     public void setDueDate(LocalDate dueDate) {
+        this.dueDate = dueDate;
+    }
+
     @Override
     public boolean processPayment() {
         if (barCode == null || barCode.isEmpty()) {
